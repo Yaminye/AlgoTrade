@@ -1,0 +1,19 @@
+services:
+  algotrade:
+    build: .
+    container_name: algotrade
+    ports:
+      - "9001:9001"
+    env_file:
+      - .env
+    volumes:
+      - ./app.py:/app/app.py
+      - ./yahoo_data.py:/app/yahoo_data.py
+      - ./tabs:/app/tabs
+      - ./utils:/app/utils
+      - ./data_cache:/app/data_cache
+      - ./.streamlit:/app/.streamlit:ro
+    environment:
+      - STREAMLIT_SERVER_RUN_ON_SAVE=true
+      - STREAMLIT_SERVER_FILE_WATCHER_TYPE=poll
+    restart: unless-stopped

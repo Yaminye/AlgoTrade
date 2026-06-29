@@ -1,12 +1,13 @@
 """⚖️ Stock comparison tab (FMP + live yfinance TTM)."""
 
 import datetime as _dt
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils import theme, fmp
-from utils.data import yf_live_info
+from utils import theme, fmp, ai
+from utils.data import yf_live_info, yf_analyst_data
 from utils.format import section, style_df
 from utils.glossary import label_with_info
 
@@ -158,6 +159,130 @@ def _plot_metric(metric_name, title, source_dict, live_data, as_pct=False, info_
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _render_ai_section(tickers, cmp_metrics, src_map, live_data,
+                       all_ratios, all_metrics):
+    if not tickers:
+        return
+
+    # Anchor for auto-scroll
+    st.markdown('<div id="ai-compare-anchor"></div>', unsafe_allow_html=True)
+    st.markdown("""
+    <script>
+      setTimeout(() => {
+        const el = window.parent.document.getElementById("ai-compare-anchor");
+        if (el) el.scrollIntoView({behavior: "smooth", block: "start"});
+      }, 300);
+    </script>
+    """, unsafe_allow_html=True)
+
+    # Fetch missing data on-the-fly for tickers not already loaded
+    missing_status = {}  # ticker -> "ok" | "partial" | "none"
+    for t in tickers:
+        if t not in live_data:
+            live_data[t] = yf_live_info(t) or {}
+        if t not in all_ratios:
+            try:
+                all_ratios[t] = fmp.fetch(t, "ratios", force=False) or []
+            except Exception:
+                all_ratios[t] = []
+        if t not in all_metrics:
+            try:
+                all_metrics[t] = fmp.fetch(t, "metrics", force=False) or []
+            except Exception:
+                all_metrics[t] = []
+        has_live = bool(live_data.get(t))
+        has_fmp  = bool(all_ratios.get(t)) or bool(all_metrics.get(t))
+        if not has_live and not has_fmp:
+            missing_status[t] = "none"
+        elif not has_fmp or not has_live:
+            missing_status[t] = "partial"
+        else:
+            missing_status[t] = "ok"
+
+    # Refresh src_map references (in case we filled new keys above)
+    src_map = {"ratios": all_ratios, "metrics": all_metrics}
+
+    per_ticker_metrics = {t: {} for t in tickers}
+    for label, key, src_name, is_pct, _info in cmp_metrics:
+        for t in tickers:
+            v = live_data.get(t, {}).get(YF_MAP.get(key, ""))
+            if v is None:
+                rows = src_map[src_name].get(t) or []
+                v = rows[0].get(key) if rows else None
+            if v is None:
+                per_ticker_metrics[t][label] = "—"
+            elif is_pct:
+                per_ticker_metrics[t][label] = f"{v*100:.2f}%"
+            else:
+                per_ticker_metrics[t][label] = f"{v:.2f}"
+
+    # Annotate metrics with data-quality note for the agent
+    for t in tickers:
+        status = missing_status.get(t, "ok")
+        if status == "none":
+            per_ticker_metrics[t]["⚠️ סטטוס נתונים"] = "אין נתונים זמינים עבור מניה זו"
+        elif status == "partial":
+            per_ticker_metrics[t]["⚠️ סטטוס נתונים"] = "נתונים חלקיים בלבד (חסרים שדות)"
+
+    cache_key = "ai_multi_" + "_".join(tickers)
+    if cache_key not in st.session_state:
+        summaries = {}
+        try:
+            analyst_blobs = {t: yf_analyst_data(t) for t in tickers}
+
+            section("🤖 שלב 1: סוכנים מנתחים כל מניה במקביל")
+            progress = st.progress(0.0, text="מפעיל סוכנים...")
+            status_lines = {t: st.empty() for t in tickers}
+            for t in tickers:
+                status_lines[t].info(f"⏳ [{t}] סוכן רץ — חיפוש חדשות + ניתוח...")
+
+            def worker(t):
+                return t, ai.analyze_single_stock(
+                    t, per_ticker_metrics[t], analyst_blobs.get(t, {})
+                )
+
+            done = 0
+            with ThreadPoolExecutor(max_workers=min(len(tickers), 5)) as ex:
+                futures = [ex.submit(worker, t) for t in tickers]
+                for fut in as_completed(futures):
+                    t, summary = fut.result()
+                    summaries[t] = summary
+                    done += 1
+                    status_lines[t].success(f"✅ [{t}] סוכן סיים")
+                    progress.progress(done / len(tickers),
+                                      text=f"{done}/{len(tickers)} סוכנים סיימו")
+
+            section("🧠 שלב 2: סוכן סופי מבצע השוואה והמלצה")
+            with st.spinner("מסנתז ומשווה..."):
+                final_text = ai.final_recommendation(summaries)
+
+            st.session_state[cache_key] = {"summaries": summaries, "final": final_text}
+        except Exception as e:
+            st.error(f"שגיאת AI: {e}")
+            st.session_state.pop("_compare_ai_clicked", None)
+            return
+
+    result = st.session_state[cache_key]
+
+    section("📋 סיכומים פר-מניה")
+    for t, summary in result["summaries"].items():
+        with st.expander(f"🔍 [{t}] — סיכום סוכן", expanded=False):
+            st.markdown(
+                f'<div dir="rtl" style="text-align:right; line-height:1.8;">\n\n'
+                f'{ai.strip_ticker_brackets(summary)}\n\n</div>',
+                unsafe_allow_html=True,
+            )
+
+    section("🧠 השוואה סופית והמלצה")
+    st.markdown(
+        f'<div dir="rtl" style="text-align:right; line-height:1.8;">\n\n'
+        f'{ai.strip_ticker_brackets(result["final"])}\n\n</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("---")
+
+
 def render(ctx):
     section("השוואת מניות")
     load, refresh = _ticker_inputs(ctx["ticker_items"], ctx["ticker_labels"], ctx["ticker_by_sym"])
@@ -175,6 +300,9 @@ def render(ctx):
             for t in tickers:
                 fmp.clear_cache(t)
         st.session_state.compare_loaded_tickers = tickers
+        # Reset AI state so it doesn't auto-rerun after re-loading data
+        st.session_state.pop("_compare_ai_clicked", None)
+        st.session_state.pop("_compare_ai_request", None)
 
     loaded = st.session_state.compare_loaded_tickers
 
@@ -207,8 +335,48 @@ def render(ctx):
 
     tickers = loaded  # use loaded list for the rest of the render
 
-    # Snapshot table (TTM)
-    section("השוואה – נתונים עדכניים (TTM)")
+    # AI compare button — only visible after data loaded
+    st.markdown("""
+    <style>
+      .st-key-compare_ai button,
+      div[class*="st-key-compare_ai"] button {
+        background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%) !important;
+        color: #ffffff !important;
+        font-size: 1.9rem !important;
+        font-weight: 900 !important;
+        letter-spacing: 0.5px !important;
+        padding: 1.8rem 2rem !important;
+        min-height: 95px !important;
+        width: 100% !important;
+        border: 3px solid #15803d !important;
+        border-radius: 14px !important;
+        box-shadow: 0 6px 18px rgba(34, 197, 94, 0.55) !important;
+        transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+      }
+      .st-key-compare_ai button p,
+      div[class*="st-key-compare_ai"] button p {
+        font-size: 1.9rem !important;
+        font-weight: 900 !important;
+        color: #ffffff !important;
+        margin: 0 !important;
+      }
+      .st-key-compare_ai button:hover,
+      div[class*="st-key-compare_ai"] button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 8px 24px rgba(34, 197, 94, 0.75) !important;
+        border-color: #166534 !important;
+        background: linear-gradient(135deg, #15803d 0%, #16a34a 100%) !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+    if st.button("🤖 השוואת AI", use_container_width=True, key="compare_ai",
+                 type="secondary"):
+        # Snapshot the CURRENT visible tickers at click time.
+        _snapshot = [t.strip().upper() for t in st.session_state.compare_tickers_list if t.strip()]
+        _seen_snap = set()
+        _snapshot = [t for t in _snapshot if not (t in _seen_snap or _seen_snap.add(t))]
+        st.session_state["_compare_ai_request"] = tuple(_snapshot)
+
     cmp_metrics = [
         ("P/E",               "priceToEarningsRatio", "ratios",  False, "pe"),
         ("P/B",               "priceToBookRatio",     "ratios",  False, "pb"),
@@ -222,6 +390,14 @@ def render(ctx):
         ("יחס שוטף",          "currentRatio",         "ratios",  False, "current_ratio"),
     ]
     src_map = {"ratios": all_ratios, "metrics": all_metrics}
+
+    # ── AI multi-agent (renders right under the button, above TTM table) ─────
+    # Uses snapshot taken at click time — NOT the current inputs.
+    req_tickers = list(st.session_state.get("_compare_ai_request") or ())
+    _render_ai_section(req_tickers, cmp_metrics, src_map, live_data, all_ratios, all_metrics)
+
+    # Snapshot table (TTM)
+    section("השוואה – נתונים עדכניים (TTM)")
     # Build HTML table so we can embed ℹ️ tooltips in the metric labels
     header_cells = (
         "<th style='padding:6px 8px;text-align:left'>מדד</th>" +
@@ -273,3 +449,4 @@ def render(ctx):
     c9, c10 = st.columns(2)
     with c9:  _plot_metric("debtToAssetsRatio", "D/E (debt/assets)", all_ratios, live_data, info_key="de")
     with c10: _plot_metric("currentRatio",      "Current Ratio",      all_ratios, live_data, info_key="current_ratio")
+

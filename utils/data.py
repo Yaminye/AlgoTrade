@@ -50,6 +50,39 @@ def load_ticker_dir():
     return items, labels
 
 
+@st.cache_data(ttl=600)
+def yf_analyst_data(sym):
+    """Return analyst-related fields: targets, recommendation, EPS estimates."""
+    try:
+        tk = yf.Ticker(sym)
+        info = tk.info or {}
+        out = {
+            "currentPrice":           info.get("currentPrice") or info.get("regularMarketPrice"),
+            "targetMeanPrice":        info.get("targetMeanPrice"),
+            "targetHighPrice":        info.get("targetHighPrice"),
+            "targetLowPrice":         info.get("targetLowPrice"),
+            "targetMedianPrice":      info.get("targetMedianPrice"),
+            "recommendationKey":      info.get("recommendationKey"),
+            "recommendationMean":     info.get("recommendationMean"),
+            "numberOfAnalystOpinions": info.get("numberOfAnalystOpinions"),
+        }
+        try:
+            ee = tk.earnings_estimate
+            if ee is not None and not ee.empty:
+                out["earningsEstimate"] = ee.to_dict()
+        except Exception:
+            pass
+        try:
+            recs = tk.recommendations
+            if recs is not None and not recs.empty:
+                out["recentRecommendations"] = recs.tail(5).to_dict()
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return {}
+
+
 @st.cache_data(ttl=300)
 def yf_live_info(sym):
     """Lightweight live snapshot (used by comparison TTM points).
