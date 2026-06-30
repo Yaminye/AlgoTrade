@@ -6,6 +6,11 @@ explains every metric in Hebrew, and layers a **multi-agent Claude AI engine** o
 the numbers, searches the web for current news, and produces a structured, ranked comparison and
 recommendation.
 
+🔗 **Live demo:** <https://algotrade-yehoidoidan.streamlit.app>
+*(Mockup deployment: the AI features require the visitor's own Anthropic API key — the authors do
+not expose theirs. Market data falls back to a saved snapshot when the shared cloud IP is
+rate-limited by Yahoo Finance. Run locally for full live data.)*
+
 > **Disclaimer:** AlgoTrade is an educational research and comparison tool — **not** personalised
 > investment advice, and not a brokerage. It does not place trades or hold funds.
 
