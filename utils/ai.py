@@ -24,10 +24,21 @@ TICKER_PATTERN = re.compile(r"\[\$([A-Z]{1,5}(?:\.[A-Z])?)\]")
 
 
 def _api_key():
+    # Priority: key the visitor typed in the UI (session) → secrets → env var.
+    # This lets the app deploy WITHOUT the owner's Anthropic key: each visitor
+    # brings their own, so AI usage is billed to them, not the owner.
+    user_key = st.session_state.get("user_anthropic_key", "").strip()
+    if user_key:
+        return user_key
     try:
         return st.secrets["ANTHROPIC_API_KEY"]
     except Exception:
         return os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+def has_api_key():
+    """True if an Anthropic key is available (from the UI, secrets, or env)."""
+    return bool(_api_key())
 
 
 def chat(messages, with_web_search=True, max_tokens=1500):

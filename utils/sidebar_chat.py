@@ -63,6 +63,20 @@ def render():
     st.markdown("### 🤖 AI Stock Assistant")
     st.caption("שאל אותי על סקטור, חברה, או חדשות שוק")
 
+    # Bring-your-own Anthropic key (so AI usage is billed to the visitor).
+    if not ai.has_api_key():
+        with st.expander("🔑 הפעלת AI — הזן מפתח Anthropic", expanded=True):
+            st.caption(
+                "תכונות ה-AI דורשות מפתח Anthropic משלך. "
+                "הדבק אותו כאן (נשמר רק לדפדפן שלך, לא נשמר בשרת). "
+                "מנפיקים מפתח ב-console.anthropic.com."
+            )
+            st.session_state["user_anthropic_key"] = st.text_input(
+                "ANTHROPIC_API_KEY", value=st.session_state.get("user_anthropic_key", ""),
+                type="password", label_visibility="collapsed",
+                placeholder="sk-ant-...",
+            )
+
     # History
     for i, msg in enumerate(st.session_state.chat_messages):
         _render_message(msg, i)

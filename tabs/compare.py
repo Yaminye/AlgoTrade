@@ -164,6 +164,11 @@ def _render_ai_section(tickers, cmp_metrics, src_map, live_data,
     if not tickers:
         return
 
+    if not ai.has_api_key():
+        st.info("🔑 כדי להפעיל השוואת AI, הזן מפתח Anthropic בסרגל הצד "
+                "(תחת 'AI Stock Assistant').")
+        return
+
     # Anchor for auto-scroll
     st.markdown('<div id="ai-compare-anchor"></div>', unsafe_allow_html=True)
     st.markdown("""
