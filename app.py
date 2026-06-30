@@ -4,7 +4,7 @@ import streamlit as st
 
 from utils import theme, sidebar_chat
 from utils.data import (
-    load_ticker_data, load_hist, load_hist_full, load_ticker_dir,
+    load_ticker_data, load_hist, load_hist_full, load_ticker_dir, served_sample,
 )
 from utils.format import fmt
 from tabs import chart, financials, valuation, compare, analysts, holders, profile
@@ -103,6 +103,9 @@ ctx = dict(
 
 
 def render_main():
+    if served_sample():
+        st.caption("📦 מוצגים נתוני דמו שמורים (snapshot) — מקור Yahoo Finance מוגבל "
+                   "ב-IP משותף בענן. הרצה מקומית מציגה נתונים חיים.")
     col_h1, col_h2 = st.columns([3, 1])
     with col_h1:
         st.markdown(f"## {name} &nbsp; `{ticker_input}`")
