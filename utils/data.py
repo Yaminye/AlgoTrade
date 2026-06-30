@@ -1,6 +1,15 @@
-"""Cached data loaders (yfinance + SEC ticker directory)."""
+"""Cached data loaders (yfinance + SEC ticker directory).
+
+When the live Yahoo Finance feed is unavailable (e.g. HTTP 429 rate-limits on a
+shared cloud IP), the loaders fall back to bundled snapshots in ``sample_data/``
+so the deployed app still shows data. Regenerate snapshots with
+``scripts/make_sample_data.py``.
+"""
 
 import time
+import pickle
+from pathlib import Path
+
 import streamlit as st
 import yfinance as yf
 from . import tickers as tickers_db
@@ -9,6 +18,27 @@ try:
     from curl_cffi import requests as _cffi
 except Exception:  # pragma: no cover
     _cffi = None
+
+SAMPLE_DIR = Path(__file__).parent.parent / "sample_data"
+_SAMPLE_SERVED = {"v": False}
+
+
+def served_sample():
+    """True if any loader has served a bundled snapshot this process."""
+    return _SAMPLE_SERVED["v"]
+
+
+def _sample(name):
+    f = SAMPLE_DIR / f"{name}.pkl"
+    if f.exists():
+        try:
+            with open(f, "rb") as fh:
+                obj = pickle.load(fh)
+            _SAMPLE_SERVED["v"] = True
+            return obj
+        except Exception:
+            return None
+    return None
 
 
 @st.cache_resource
@@ -50,6 +80,10 @@ def _retry(fn, tries=3, base=1.2):
     raise last
 
 
+def _has_price(info):
+    return bool(info) and bool(info.get("currentPrice") or info.get("regularMarketPrice"))
+
+
 @st.cache_data(ttl=300)
 def load_ticker_data(sym):
     def _load():
@@ -73,16 +107,45 @@ def load_ticker_data(sym):
             income_a=income_a, income_q=income_q, balance=balance, cashflow=cashflow,
             inst=inst, mf=mf, sustainability=sustainability, recs=recs, ee=ee,
         )
+
+    try:
+        d = _retry(_load)
+        if _has_price(d.get("info")):
+            return d
+    except Exception:
+        pass
+    s = _sample(f"ticker_data_{sym.upper()}")
+    if s is not None:
+        return s
+    # No snapshot for this ticker — return whatever we got (may be empty)
     return _retry(_load)
 
 
 @st.cache_data(ttl=300)
 def load_hist(sym, period):
+    try:
+        h = _retry(lambda: _ticker(sym).history(period=period, auto_adjust=True))
+        if h is not None and not h.empty:
+            return h
+    except Exception:
+        pass
+    s = _sample(f"hist_{sym.upper()}_{period}")
+    if s is not None:
+        return s
     return _retry(lambda: _ticker(sym).history(period=period, auto_adjust=True))
 
 
 @st.cache_data(ttl=300)
 def load_hist_full(sym):
+    try:
+        h = _retry(lambda: _ticker(sym).history(period="5y", auto_adjust=True))
+        if h is not None and not h.empty:
+            return h
+    except Exception:
+        pass
+    s = _sample(f"hist_full_{sym.upper()}")
+    if s is not None:
+        return s
     return _retry(lambda: _ticker(sym).history(period="5y", auto_adjust=True))
 
 
@@ -103,6 +166,8 @@ def yf_analyst_data(sym):
     try:
         tk = _ticker(sym)
         info = _retry(lambda: tk.info) or {}
+        if not _has_price(info):
+            raise RuntimeError("no live analyst data")
         out = {
             "currentPrice":           info.get("currentPrice") or info.get("regularMarketPrice"),
             "targetMeanPrice":        info.get("targetMeanPrice"),
@@ -127,7 +192,7 @@ def yf_analyst_data(sym):
             pass
         return out
     except Exception:
-        return {}
+        return _sample(f"analyst_{sym.upper()}") or {}
 
 
 @st.cache_data(ttl=300)
@@ -137,6 +202,8 @@ def yf_live_info(sym):
     try:
         tk = _ticker(sym)
         info = dict(_retry(lambda: tk.info) or {})
+        if not _has_price(info):
+            raise RuntimeError("no live info")
         try:
             bs = tk.quarterly_balance_sheet
             if bs is not None and not bs.empty:
@@ -158,4 +225,4 @@ def yf_live_info(sym):
             pass
         return info
     except Exception:
-        return {}
+        return _sample(f"live_{sym.upper()}") or {}
