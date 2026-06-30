@@ -116,9 +116,9 @@ def compare_stocks(tickers, metrics_rows, max_tokens=2000):
     return "\n".join(parts).strip()
 
 
-def analyze_single_stock(ticker, ttm_metrics, analyst_data, max_tokens=2000):
-    """Per-stock agent: receives TTM row + analyst data, searches news via web_search,
-    returns Hebrew summary."""
+def analyze_single_stock(ticker, ttm_metrics, analyst_data, financials="", max_tokens=2000):
+    """Per-stock agent: receives TTM row + latest income statement + analyst data,
+    searches news via web_search, returns Hebrew summary."""
     key = _api_key()
     if not key:
         raise RuntimeError("ANTHROPIC_API_KEY missing")
@@ -128,16 +128,23 @@ def analyze_single_stock(ticker, ttm_metrics, analyst_data, max_tokens=2000):
     analyst_md = "\n".join(f"- **{k}**: {v}" for k, v in analyst_data.items()
                             if v is not None and k not in ("earningsEstimate", "recentRecommendations"))
 
+    financials_section = (
+        f"### דוחות כספיים אחרונים — רווח והפסד (FMP):\n{financials}\n\n"
+        if financials else ""
+    )
+
     user_msg = (
         f"נתח את המניה [${ticker}].\n\n"
         f"### נתוני TTM (מהטבלה):\n{metrics_md}\n\n"
+        f"{financials_section}"
         f"### נתוני אנליסטים (Yahoo Finance):\n{analyst_md}\n\n"
         f"### משימה:\n"
         f"1. השתמש ב-web_search לחפש חדשות עדכניות על [${ticker}] (החודשיים האחרונים).\n"
         f"2. סכם בעברית:\n"
         f"   - **תמונה כללית** (תחום, מצב נוכחי, מומנטום).\n"
         f"   - **חדשות מהותיות** (2-3 נקודות).\n"
-        f"   - **ניתוח TTM** (האם המכפילים יקרים/זולים, רווחיות).\n"
+        f"   - **ניתוח פיננסי** — מגמת הכנסות, רווח גולמי/תפעולי/נקי לאורך השנים "
+        f"(מהדוחות), והאם המכפילים (TTM) יקרים/זולים.\n"
         f"   - **עמדת אנליסטים** (יעד, המלצה).\n"
         f"   - **סיכונים והזדמנויות**.\n"
         f"3. שמור על קיצור — 200-300 מילים."

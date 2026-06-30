@@ -26,6 +26,36 @@ YF_MAP = {
 }
 
 
+def _money(v):
+    """Humanise a currency figure: 1.23B / 456.7M / 12,345."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    a = abs(v)
+    if a >= 1e9:
+        return f"${v/1e9:.2f}B"
+    if a >= 1e6:
+        return f"${v/1e6:.1f}M"
+    return f"${v:,.0f}"
+
+
+def _income_summary(rows, n=3):
+    """Compact markdown table of the last `n` annual income statements
+    (revenue, gross/operating/net profit) for the per-stock AI agent."""
+    if not rows:
+        return ""
+    lines = ["| שנה | הכנסות | רווח גולמי | רווח תפעולי | רווח נקי |",
+             "|---|---|---|---|---|"]
+    for r in rows[:n]:
+        yr = (r.get("calendarYear") or r.get("fiscalYear")
+              or str(r.get("date", ""))[:4] or "—")
+        lines.append("| {} | {} | {} | {} | {} |".format(
+            yr, _money(r.get("revenue")), _money(r.get("grossProfit")),
+            _money(r.get("operatingIncome")), _money(r.get("netIncome"))))
+    return "\n".join(lines)
+
+
 def _sync_ids():
     """Keep compare_slot_ids in sync with compare_tickers_list length."""
     if "compare_slot_ids" not in st.session_state:
@@ -234,6 +264,13 @@ def _render_ai_section(tickers, cmp_metrics, src_map, live_data,
         summaries = {}
         try:
             analyst_blobs = {t: yf_analyst_data(t) for t in tickers}
+            financials_blobs = {}
+            for t in tickers:
+                try:
+                    inc = fmp.fetch(t, "income", force=False) or []
+                except Exception:
+                    inc = []
+                financials_blobs[t] = _income_summary(inc)
 
             section("🤖 שלב 1: סוכנים מנתחים כל מניה במקביל")
             progress = st.progress(0.0, text="מפעיל סוכנים...")
@@ -243,7 +280,8 @@ def _render_ai_section(tickers, cmp_metrics, src_map, live_data,
 
             def worker(t):
                 return t, ai.analyze_single_stock(
-                    t, per_ticker_metrics[t], analyst_blobs.get(t, {})
+                    t, per_ticker_metrics[t], analyst_blobs.get(t, {}),
+                    financials=financials_blobs.get(t, ""),
                 )
 
             done = 0
